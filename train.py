@@ -1,11 +1,21 @@
 import os
 import torch
 from torch import optim, nn
-from torch.utils.data import TensorDataset, DataLoader, random_split
-from torch.cuda.amp import autocast, GradScaler
+from torch.utils.data import DataLoader, random_split
+from torch.amp import autocast, GradScaler
 
 from models.UNet import UNet
-from data_preprocessing import load_data
+from data_preprocessing import DefocusDataset
+
+import boto3
+
+def upload_checkpoint(local_path, s3_key):
+    s3.upload_file(
+        local_path,
+        S3_BUCKET,
+        s3_key
+    )
+    print(f"Uploaded to s3://{S3_BUCKET}/{s3_key}")
 
 # ------------------
 # Config
@@ -17,6 +27,11 @@ num_epochs = 50
 val_split = 0.15
 checkpoint_dir = "checkpoints"
 
+s3 = boto3.client("s3")
+
+S3_BUCKET = "tejas-blender-bucket"
+S3_CHECKPOINT_PREFIX = "defocus-checkpoints/unet-coc"
+
 os.makedirs(checkpoint_dir, exist_ok=True)
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -26,16 +41,18 @@ print("Using device:", device)
 # Load data
 # ------------------
 
-X, Y = load_data()
-X = torch.from_numpy(X).float()
-Y = torch.from_numpy(Y).float()
+dataset = DefocusDataset()
 
-print("X:", X.shape)  # [N, 5, H, W]
-print("Y:", Y.shape)  # [N, 1, H, W]
+# X, Y = load_data()
+# X = torch.from_numpy(X).float()
+# Y = torch.from_numpy(Y).float()
 
-dataset = TensorDataset(X, Y)
+# print("X:", X.shape)  # [N, 5, H, W]
+# print("Y:", Y.shape)  # [N, 1, H, W]
 
-val_size = int(len(dataset) * val_split)
+# dataset = TensorDataset(X, Y)
+
+val_size = max(1, int(len(dataset) * val_split))
 train_size = len(dataset) - val_size
 
 train_dataset, val_dataset = random_split(
@@ -48,7 +65,7 @@ train_loader = DataLoader(
     train_dataset,
     batch_size=batch_size,
     shuffle=True,
-    num_workers=2,
+    num_workers=0,
     pin_memory=True
 )
 
@@ -56,7 +73,7 @@ val_loader = DataLoader(
     val_dataset,
     batch_size=1,
     shuffle=False,
-    num_workers=2,
+    num_workers=0,
     pin_memory=True
 )
 
@@ -76,7 +93,7 @@ scheduler = optim.lr_scheduler.ReduceLROnPlateau(
     patience=3
 )
 
-scaler = GradScaler(enabled=(device == "cuda"))
+scaler = GradScaler("cuda", enabled=(device == "cuda"))
 
 best_val_loss = float("inf")
 
@@ -84,7 +101,24 @@ best_val_loss = float("inf")
 # Training loop
 # ------------------
 
-for epoch in range(num_epochs):
+start_epoch = 0
+latest_path = os.path.join(checkpoint_dir, "latest.pth")
+
+try:
+    checkpoint = torch.load(latest_path, map_location=device)
+
+    model.load_state_dict(checkpoint["model_state_dict"])
+    optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+
+    start_epoch = checkpoint["epoch"]
+    best_val_loss = checkpoint.get("val_loss", float("inf"))
+
+    print(f"Resuming from epoch {start_epoch}")
+
+except Exception as e:
+    print(f"No local checkpoint found. Starting fresh. Reason: {e}")
+
+for epoch in range(start_epoch, num_epochs):
     model.train()
     train_loss = 0.0
 
@@ -94,7 +128,7 @@ for epoch in range(num_epochs):
 
         optimizer.zero_grad(set_to_none=True)
 
-        with autocast(enabled=(device == "cuda")):
+        with autocast("cuda", enabled=(device == "cuda")):
             predictions = model(batch_X)
             loss = criterion(predictions, batch_y)
 
@@ -135,7 +169,25 @@ for epoch in range(num_epochs):
     )
 
     # save latest checkpoint
+    epoch_path = os.path.join(
+        checkpoint_dir,
+        f"epoch_{epoch+1}.pth"
+    )
+
+    torch.save({
+        "epoch": epoch + 1,
+        "model_state_dict": model.state_dict(),
+        "optimizer_state_dict": optimizer.state_dict(),
+        "val_loss": avg_val_loss,
+    }, epoch_path)
+
+    upload_checkpoint(
+        epoch_path,
+        f"{S3_CHECKPOINT_PREFIX}/epoch_{epoch+1}.pth"
+    )
+
     latest_path = os.path.join(checkpoint_dir, "latest.pth")
+
     torch.save({
         "epoch": epoch + 1,
         "model_state_dict": model.state_dict(),
@@ -143,12 +195,22 @@ for epoch in range(num_epochs):
         "val_loss": avg_val_loss,
     }, latest_path)
 
+    upload_checkpoint(
+        latest_path,
+        f"{S3_CHECKPOINT_PREFIX}/latest.pth"
+    )
+
     # save best checkpoint
     if avg_val_loss < best_val_loss:
         best_val_loss = avg_val_loss
 
         best_path = os.path.join(checkpoint_dir, "best_unet_coc.pth")
         torch.save(model.state_dict(), best_path)
+
+        upload_checkpoint(
+            best_path,
+            f"{S3_CHECKPOINT_PREFIX}/best_unet_coc.pth"
+        )
 
         print(f"Saved new best model: {best_path}")
 
