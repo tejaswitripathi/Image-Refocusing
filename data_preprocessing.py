@@ -99,7 +99,8 @@ class DefocusDataset(Dataset):
         files = {
             "defocused": "defocused.png",
             "metadata": "metadata.json",
-            "coc": "coc.json"
+            "coc": "coc.json",
+            "depth": "depth_.exr"
         }
 
         local_paths = {}
@@ -137,10 +138,10 @@ class DefocusDataset(Dataset):
         # Metadata
         # ----------------------------
 
-        metadata = getMetadata(local_folder + "/")
+        with open(local_paths["metadata"], "r") as f:
+            metadata = json.load(f)
 
-        H = metadata["height"]
-        W = metadata["width"]
+        H, W = rgb.shape[1], rgb.shape[2]
 
         f_stop = metadata["f_stop"] / 8.0
         fstop_map = np.ones(
@@ -149,7 +150,7 @@ class DefocusDataset(Dataset):
         ) * f_stop
 
         focal_length = (
-            metadata["focal_length_m"] * 1000.0
+            metadata["focal_length_mm"]
         ) / 135.0
 
         focal_map = np.ones(
@@ -182,6 +183,31 @@ class DefocusDataset(Dataset):
 
         y = np.clip(coc_px, 0, 25) / 25.0
         y = y[None, :, :].astype(np.float32)
+
+        # ----------------------------
+        # Random crop
+        # ----------------------------
+
+        crop_size = 512
+
+        _, H, W = x.shape
+
+        if H > crop_size and W > crop_size:
+
+            top = np.random.randint(0, H - crop_size + 1)
+            left = np.random.randint(0, W - crop_size + 1)
+
+            x = x[
+                :,
+                top:top + crop_size,
+                left:left + crop_size
+            ]
+
+            y = y[
+                :,
+                top:top + crop_size,
+                left:left + crop_size
+            ]
 
         # ----------------------------
         # Torch tensors
