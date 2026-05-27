@@ -150,6 +150,27 @@ for epoch in range(start_epoch, num_epochs):
             predictions = model(batch_X)
             loss = criterion(predictions, batch_y)
 
+        # ----------------------------
+        # Loss sanity check
+        # ----------------------------
+
+        if torch.isnan(loss):
+            print(f"NaN loss detected at batch {batch_idx}")
+
+            print("batch_X range:",
+                batch_X.min().item(),
+                batch_X.max().item())
+
+            print("batch_y range:",
+                batch_y.min().item(),
+                batch_y.max().item())
+
+            print("predictions range:",
+                predictions.min().item(),
+                predictions.max().item())
+
+            raise RuntimeError("Stopping training due to NaN loss")
+
         scaler.scale(loss).backward()
         scaler.step(optimizer)
         scaler.update()
