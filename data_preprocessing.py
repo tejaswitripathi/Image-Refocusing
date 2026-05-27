@@ -68,7 +68,7 @@ class DefocusDataset(Dataset):
 
         os.makedirs(os.path.dirname(local_path), exist_ok=True)
 
-        print(f"Downloading {s3_key}")
+        # print(f"Downloading {s3_key}")
 
         self.s3.download_file(
             self.bucket_name,

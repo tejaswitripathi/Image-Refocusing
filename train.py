@@ -119,10 +119,28 @@ except Exception as e:
     print(f"No local checkpoint found. Starting fresh. Reason: {e}")
 
 for epoch in range(start_epoch, num_epochs):
+    print(f"Starting epoch {epoch+1}")
     model.train()
     train_loss = 0.0
 
-    for batch_X, batch_y in train_loader:
+    for batch_idx, (batch_X, batch_y) in enumerate(train_loader):
+
+        if torch.isnan(batch_X).any():
+            print(f"NaNs found in batch_X at batch {batch_idx}")
+            raise RuntimeError("Stopping training due to NaNs in inputs")
+
+        if torch.isnan(batch_y).any():
+            print(f"NaNs found in batch_y at batch {batch_idx}")
+            raise RuntimeError("Stopping training due to NaNs in targets")
+
+        if torch.isinf(batch_X).any():
+            print(f"Infs found in batch_X at batch {batch_idx}")
+            raise RuntimeError("Stopping training due to Infs in inputs")
+
+        if torch.isinf(batch_y).any():
+            print(f"Infs found in batch_y at batch {batch_idx}")
+            raise RuntimeError("Stopping training due to Infs in targets")
+
         batch_X = batch_X.to(device, non_blocking=True)
         batch_y = batch_y.to(device, non_blocking=True)
 
