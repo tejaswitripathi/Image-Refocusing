@@ -22,7 +22,7 @@ def upload_checkpoint(local_path, s3_key):
 # ------------------
 
 learning_rate = 1e-4
-batch_size = 2
+batch_size = 4
 num_epochs = 50
 val_split = 0.15
 checkpoint_dir = "checkpoints"
@@ -42,15 +42,6 @@ print("Using device:", device)
 # ------------------
 
 dataset = DefocusDataset()
-
-# X, Y = load_data()
-# X = torch.from_numpy(X).float()
-# Y = torch.from_numpy(Y).float()
-
-# print("X:", X.shape)  # [N, 5, H, W]
-# print("Y:", Y.shape)  # [N, 1, H, W]
-
-# dataset = TensorDataset(X, Y)
 
 val_size = max(1, int(len(dataset) * val_split))
 train_size = len(dataset) - val_size
@@ -83,7 +74,7 @@ val_loader = DataLoader(
 
 model = UNet(in_channels=5, out_channels=1).to(device)
 
-criterion = nn.L1Loss()
+criterion = nn.SmoothL1Loss(beta=0.05)
 optimizer = optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-4)
 
 scheduler = optim.lr_scheduler.ReduceLROnPlateau(

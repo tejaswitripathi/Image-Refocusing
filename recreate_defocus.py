@@ -93,7 +93,7 @@ def recreate_with_disk_blur(sharp, radius_map, num_bins=96):
 
     return np.clip(out, 0, 1)
 
-datadir = "cafe/dataset/img_00000_f1.2_fl50_fd5.61/"
+datadir = "bedroom/dataset/img_00007_f2.8_fl50_fd3.00/"
 metadata = getMetadata(datadir)
 coc_px = generate_coc_map(metadata)
 num_bins = 96

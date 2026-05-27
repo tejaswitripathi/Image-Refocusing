@@ -6,6 +6,8 @@ import torch
 
 from torch.utils.data import Dataset
 from skimage import io
+from skimage.transform import resize
+
 
 from coc_map import getMetadata
 
@@ -99,12 +101,10 @@ class DefocusDataset(Dataset):
         files = {
             "defocused": "defocused.png",
             "metadata": "metadata.json",
-            "coc": "coc.json",
-            "depth": "depth_.exr"
+            "coc": "coc.json"
         }
 
         local_paths = {}
-        s3_keys = {}
 
         for key, filename in files.items():
 
@@ -116,7 +116,6 @@ class DefocusDataset(Dataset):
             )
 
             local_paths[key] = local_path
-            s3_keys[key] = s3_key
 
             self._download_if_missing(
                 s3_key,
@@ -132,7 +131,48 @@ class DefocusDataset(Dataset):
         ).astype(np.float32)
 
         rgb = defocused_img[:, :, :3] / 255.0
+
+        # ----------------------------
+        # Load CoC
+        # ----------------------------
+
+        with open(local_paths["coc"], "r") as f:
+            coc_px = np.array(
+                json.load(f),
+                dtype=np.float32
+            )
+
+        coc_px = np.clip(coc_px, 0, 25) / 25.0
+
+        # ----------------------------
+        # Resize full image
+        # ----------------------------
+
+        target_size = 512
+
+        rgb = resize(
+            rgb,
+            (target_size, target_size),
+            anti_aliasing=True,
+            preserve_range=True
+        ).astype(np.float32)
+
+        coc_px = resize(
+            coc_px,
+            (target_size, target_size),
+            order=1,
+            anti_aliasing=True,
+            preserve_range=True
+        ).astype(np.float32)
+
+        # ----------------------------
+        # Convert RGB to CHW
+        # ----------------------------
+
         rgb = np.transpose(rgb, (2, 0, 1))
+
+        H = target_size
+        W = target_size
 
         # ----------------------------
         # Metadata
@@ -141,9 +181,8 @@ class DefocusDataset(Dataset):
         with open(local_paths["metadata"], "r") as f:
             metadata = json.load(f)
 
-        H, W = rgb.shape[1], rgb.shape[2]
-
         f_stop = metadata["f_stop"] / 8.0
+
         fstop_map = np.ones(
             (1, H, W),
             dtype=np.float32
@@ -172,42 +211,28 @@ class DefocusDataset(Dataset):
         ).astype(np.float32)
 
         # ----------------------------
-        # CoC target
+        # Target tensor
         # ----------------------------
 
-        with open(local_paths["coc"], "r") as f:
-            coc_px = np.array(
-                json.load(f),
-                dtype=np.float32
-            )
-
-        y = np.clip(coc_px, 0, 25) / 25.0
-        y = y[None, :, :].astype(np.float32)
+        y = coc_px[None, :, :].astype(np.float32)
 
         # ----------------------------
-        # Random crop
+        # NaN protection
         # ----------------------------
 
-        crop_size = 512
+        x = np.nan_to_num(
+            x,
+            nan=0.0,
+            posinf=1.0,
+            neginf=0.0
+        )
 
-        _, H, W = x.shape
-
-        if H > crop_size and W > crop_size:
-
-            top = np.random.randint(0, H - crop_size + 1)
-            left = np.random.randint(0, W - crop_size + 1)
-
-            x = x[
-                :,
-                top:top + crop_size,
-                left:left + crop_size
-            ]
-
-            y = y[
-                :,
-                top:top + crop_size,
-                left:left + crop_size
-            ]
+        y = np.nan_to_num(
+            y,
+            nan=0.0,
+            posinf=1.0,
+            neginf=0.0
+        )
 
         # ----------------------------
         # Torch tensors
