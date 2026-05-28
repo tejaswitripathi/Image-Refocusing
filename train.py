@@ -220,36 +220,38 @@ for epoch in range(start_epoch, num_epochs):
     )
 
     # save latest checkpoint
-    epoch_path = os.path.join(
-        checkpoint_dir,
-        f"epoch_{epoch+1}.pth"
-    )
+    # epoch_path = os.path.join(
+    #     checkpoint_dir,
+    #     f"epoch_{epoch+1}.pth"
+    # )
 
-    torch.save({
-        "epoch": epoch + 1,
-        "model_state_dict": model.state_dict(),
-        "optimizer_state_dict": optimizer.state_dict(),
-        "val_loss": avg_val_loss,
-    }, epoch_path)
+    # torch.save({
+    #     "epoch": epoch + 1,
+    #     "model_state_dict": model.state_dict(),
+    #     "optimizer_state_dict": optimizer.state_dict(),
+    #     "val_loss": avg_val_loss,
+    # }, epoch_path)
 
-    upload_checkpoint(
-        epoch_path,
-        f"{S3_CHECKPOINT_PREFIX}/epoch_{epoch+1}.pth"
-    )
+    # upload_checkpoint(
+    #     epoch_path,
+    #     f"{S3_CHECKPOINT_PREFIX}/epoch_{epoch+1}.pth"
+    # )
 
     latest_path = os.path.join(checkpoint_dir, "latest.pth")
 
-    torch.save({
-        "epoch": epoch + 1,
-        "model_state_dict": model.state_dict(),
-        "optimizer_state_dict": optimizer.state_dict(),
-        "val_loss": avg_val_loss,
-    }, latest_path)
+    try:
+        torch.save({
+            "epoch": epoch + 1,
+            "model_state_dict": model.state_dict(),
+            "val_loss": avg_val_loss,
+        }, latest_path)
 
-    upload_checkpoint(
-        latest_path,
-        f"{S3_CHECKPOINT_PREFIX}/latest.pth"
-    )
+        upload_checkpoint(
+            latest_path,
+            f"{S3_CHECKPOINT_PREFIX}/latest.pth"
+        )
+    except Exception as e:
+        print("Checkpoint save failed:", e)
 
     # save best checkpoint
     if avg_val_loss < best_val_loss:
