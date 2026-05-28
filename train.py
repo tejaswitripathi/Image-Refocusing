@@ -17,13 +17,34 @@ def upload_checkpoint(local_path, s3_key):
     )
     print(f"Uploaded to s3://{S3_BUCKET}/{s3_key}")
 
+def gradient_loss(pred, target):
+    pred_dx = torch.abs(pred[:, :, :, 1:] - pred[:, :, :, :-1])
+    target_dx = torch.abs(target[:, :, :, 1:] - target[:, :, :, :-1])
+
+    pred_dy = torch.abs(pred[:, :, 1:, :] - pred[:, :, :-1, :])
+    target_dy = torch.abs(target[:, :, 1:, :] - target[:, :, :-1, :])
+
+    return (
+        torch.abs(pred_dx - target_dx).mean()
+        + torch.abs(pred_dy - target_dy).mean()
+    )
+
+def coc_loss(pred, target):
+    l1 = torch.abs(pred - target)
+    weight = 1.0 + 4.0 * target
+    weighted_l1 = (weight * l1).mean()
+
+    grad = gradient_loss(pred, target)
+
+    return weighted_l1 + 0.2 * grad
+
 # ------------------
 # Config
 # ------------------
 
 learning_rate = 1e-4
 batch_size = 4
-num_epochs = 50
+num_epochs = 100
 val_split = 0.15
 checkpoint_dir = "checkpoints"
 
@@ -74,7 +95,7 @@ val_loader = DataLoader(
 
 model = UNet(in_channels=5, out_channels=1).to(device)
 
-criterion = nn.SmoothL1Loss(beta=0.05)
+criterion = coc_loss
 optimizer = optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-4)
 
 scheduler = optim.lr_scheduler.ReduceLROnPlateau(

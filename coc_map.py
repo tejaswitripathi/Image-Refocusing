@@ -71,7 +71,6 @@ def getMetadata(datadir):
 
 # depth_vis = (255 * depth_vis).astype(np.uint8)
 def generate_coc_map(metadata):
-
     depth = metadata["depth"]
     width = metadata["width"]
 
@@ -82,8 +81,8 @@ def generate_coc_map(metadata):
 
     z = depth.astype(np.float32)
 
-    eps = 1e-6
-    z = np.maximum(z, eps)
+    valid = np.isfinite(z) & (z > 0.1) & (z < 500)
+    z[~valid] = focus_distance_m
 
     coc_m = (
         A
@@ -92,6 +91,8 @@ def generate_coc_map(metadata):
     )
 
     coc_px = coc_m / sensor_width_m * width
+
+    coc_px = np.nan_to_num(coc_px, nan=0.0, posinf=100.0, neginf=0.0)
 
     return coc_px
 
