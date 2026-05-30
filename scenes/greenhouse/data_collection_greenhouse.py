@@ -218,7 +218,7 @@ for start, end in depth_bins:
 
 #        camera.location = base_camera_location.copy()
 #        camera.location.z = base_camera_location.z - 0.35 * fl_index
-        camera.data.shift_y = -0.35 * fl_index
+        # camera.data.shift_y = -0.35 * fl_index
 
         curr_focus_distance = dist_to_camera(subject)
 
@@ -300,6 +300,6 @@ for start, end in depth_bins:
             print(f"Saved {folder}")
             img_i += 1
 
-    camera.data.shift_y = 0.0
+    # camera.data.shift_y = 0.0
 
 print("Done.")
