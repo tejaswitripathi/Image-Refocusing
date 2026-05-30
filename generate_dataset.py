@@ -45,11 +45,43 @@ DATASET_SUBDIR = "dataset"
 S3_BUCKET = "tejas-blender-bucket"
 S3_PREFIX = "defocus-dataset"
 
+def resolve_blender():
+    """Locate the Blender executable.
+
+    Resolution order:
+      1. The BLENDER env var (explicit override).
+      2. blender on PATH.
+      3. macOS app bundle.
+      4. A Blender install under /workspace (the VM layout, e.g.
+         /workspace/blender-4.2.0-linux-x64/blender).
+    """
+    env = os.environ.get("BLENDER")
+    if env:
+        return env
+
+    on_path = shutil.which("blender")
+    if on_path:
+        return on_path
+
+    macos = "/Applications/Blender.app/Contents/MacOS/Blender"
+    if os.path.exists(macos):
+        return macos
+
+    workspace_candidates = (
+        glob.glob("/workspace/blender")
+        + glob.glob("/workspace/blender*/blender")
+        + glob.glob("/workspace/**/blender", recursive=True)
+    )
+    for cand in workspace_candidates:
+        if os.path.isfile(cand) and os.access(cand, os.X_OK):
+            return cand
+
+    # Fall back to the bare name; will error clearly at run time if missing.
+    return "blender"
+
+
 # Blender executable. Override with the BLENDER env var if needed.
-DEFAULT_BLENDER_MACOS = "/Applications/Blender.app/Contents/MacOS/Blender"
-BLENDER = os.environ.get("BLENDER") or (
-    DEFAULT_BLENDER_MACOS if os.path.exists(DEFAULT_BLENDER_MACOS) else "blender"
-)
+BLENDER = resolve_blender()
 
 
 # ----------------------------
