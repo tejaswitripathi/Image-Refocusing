@@ -90,29 +90,44 @@ def render_png(filepath):
     bpy.ops.render.render(write_still=True)
 
 def setup_depth_nodes(output_dir):
-    # remove old depth compositor groups
-    for ng in list(bpy.data.node_groups):
-        if ng.name.startswith("DepthCompositor"):
-            bpy.data.node_groups.remove(ng)
+    # Blender 5.0+: the compositor is a standalone node group.
+    if hasattr(scene, "compositing_node_group"):
+        for ng in list(bpy.data.node_groups):
+            if ng.name.startswith("DepthCompositor"):
+                bpy.data.node_groups.remove(ng)
 
-    tree = bpy.data.node_groups.new("DepthCompositor", "CompositorNodeTree")
-    scene.compositing_node_group = tree
+        tree = bpy.data.node_groups.new("DepthCompositor", "CompositorNodeTree")
+        scene.compositing_node_group = tree
 
-    render_layers = tree.nodes.new(type="CompositorNodeRLayers")
-    print("Render layer outputs:", [o.name for o in render_layers.outputs])
+        render_layers = tree.nodes.new(type="CompositorNodeRLayers")
 
-    depth_output = tree.nodes.new(type="CompositorNodeOutputFile")
-    depth_output.directory = bpy.path.abspath(output_dir)
-    depth_output.file_name = "depth_"
-    depth_output.format.file_format = "OPEN_EXR_MULTILAYER"
-    depth_output.format.color_depth = "32"
+        depth_output = tree.nodes.new(type="CompositorNodeOutputFile")
+        depth_output.directory = bpy.path.abspath(output_dir)
+        depth_output.file_name = "depth_"
+        depth_output.format.file_format = "OPEN_EXR_MULTILAYER"
+        depth_output.format.color_depth = "32"
 
-    item = depth_output.file_output_items.new("FLOAT", "depth")
+        depth_output.file_output_items.new("FLOAT", "depth")
+        tree.links.new(render_layers.outputs["Depth"], depth_output.inputs["depth"])
 
-    tree.links.new(render_layers.outputs["Depth"], depth_output.inputs["depth"])
+    # Blender 4.5 and earlier: the compositor lives on the scene.
+    else:
+        scene.use_nodes = True
+        scene.render.use_compositing = True
 
-    print("File output directory:", depth_output.directory)
-    print("File output name:", depth_output.file_name)
+        tree = scene.node_tree
+        tree.nodes.clear()
+
+        render_layers = tree.nodes.new(type="CompositorNodeRLayers")
+
+        depth_output = tree.nodes.new(type="CompositorNodeOutputFile")
+        depth_output.base_path = bpy.path.abspath(os.path.join(output_dir, "depth_"))
+        depth_output.format.file_format = "OPEN_EXR_MULTILAYER"
+        depth_output.format.color_depth = "32"
+
+        depth_output.layer_slots.clear()
+        depth_output.layer_slots.new("depth")
+        tree.links.new(render_layers.outputs["Depth"], depth_output.inputs["depth"])
 
 def setup_mask_nodes(output_dir, subject_index):
     scene.use_nodes = True
@@ -136,7 +151,10 @@ def setup_mask_nodes(output_dir, subject_index):
     tree.links.new(id_mask.outputs["Alpha"], mask_output.inputs[0])
 
 def disable_nodes():
-    scene.compositing_node_group = None
+    if hasattr(scene, "compositing_node_group"):
+        scene.compositing_node_group = None
+    elif hasattr(scene, "use_nodes"):
+        scene.use_nodes = False
 
 # ----------------------------
 # ENABLE PASSES
