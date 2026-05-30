@@ -6,4 +6,7 @@ misc/
 dataset_test.py
 models/unet-params/
 tests/
-scenes/
+scenes/*/dataset/
+scenes/*/*.blend
+scenes/*/*.blend1
+scenes/nightscene/assets/
