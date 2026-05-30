@@ -1,7 +1,3 @@
-bedroom/
-cafe/
-grass/
-bottle/
 cache/
 .ipynb_checkpoints/
 .venv/
@@ -10,3 +6,4 @@ misc/
 dataset_test.py
 models/unet-params/
 tests/
+scenes/

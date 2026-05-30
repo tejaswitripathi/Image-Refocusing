@@ -4,6 +4,7 @@ import numpy as np
 from PIL import Image
 import matplotlib.pyplot as plt
 from skimage.metrics import peak_signal_noise_ratio, structural_similarity
+from skimage.metrics import mean_squared_error
 
 import torch
 from skimage.transform import resize
@@ -160,32 +161,56 @@ def predict_coc_with_model(datadir, checkpoint_path, device=None):
 
     return pred_coc_px
 
-datadir = "bedroom/dataset/img_00007_f2.8_fl50_fd3.00/"
-# checkpoint_path = "models/unet-params/best_unet_coc.pth"
+datadir = "bedroom/dataset/img_00000_f1.2_fl35_fd3.00/"
+checkpoint_path = "models/unet-params/best_unet_coc_2.pth"
 metadata = getMetadata(datadir)
-coc_px = generate_coc_map(metadata)
-num_bins = 96
+coc_px_nn = predict_coc_with_model(datadir, checkpoint_path)
+coc_px_def = generate_coc_map(metadata)
 
-sharp_filepath = datadir + "sharp.png"
-defocused_filepath = datadir + "defocused.png"
+diff = coc_px_nn - coc_px_def
+abs_diff = np.abs(diff)
 
-sharp = np.array(Image.open(sharp_filepath).convert("RGB")).astype(np.float32) / 255.0
-target = np.array(Image.open(defocused_filepath).convert("RGB")).astype(np.float32) / 255.0
+print("MSE:", np.mean(diff ** 2))
+print("MAE:", np.mean(abs_diff))
+print("Max abs diff:", np.max(abs_diff))
+print("Median abs diff:", np.median(abs_diff))
+print("95th percentile abs diff:", np.percentile(abs_diff, 95))
 
-# scales = np.linspace(1.95, 2.05, 11)
-# psnr_data = []
-# ssim_data = []
+plt.figure(figsize=(18, 5))
 
-data = []
+rel_diff = np.abs(coc_px_nn - coc_px_def) / (coc_px_def + 1e-3)
 
-# for scale in scales:
-radius_map = coc_px / 2.01
-radius_map = np.clip(radius_map, 0, 25)
+plt.imshow(
+    np.clip(rel_diff, 0, 1),
+    cmap="inferno"
+)
+plt.title("Relative Error")
+plt.colorbar()
+plt.axis("off")
+plt.show()
 
-recreated = recreate_with_disk_blur(sharp, radius_map)
+# num_bins = 96
 
-psnr, ssim = evaluate_metrics(recreated, target)
-print(f"PSNR: {psnr:.3f}")
-print(f"SSIM: {ssim:.3f}")
+# sharp_filepath = datadir + "sharp.png"
+# defocused_filepath = datadir + "defocused.png"
 
-display_sharp_recreated_target(sharp, recreated, target)
+# sharp = np.array(Image.open(sharp_filepath).convert("RGB")).astype(np.float32) / 255.0
+# target = np.array(Image.open(defocused_filepath).convert("RGB")).astype(np.float32) / 255.0
+
+# # scales = np.linspace(1.95, 2.05, 11)
+# # psnr_data = []
+# # ssim_data = []
+
+# data = []
+
+# # for scale in scales:
+# radius_map = coc_px / 2.01
+# radius_map = np.clip(radius_map, 0, 25)
+
+# recreated = recreate_with_disk_blur(sharp, radius_map)
+
+# psnr, ssim = evaluate_metrics(recreated, target)
+# print(f"PSNR: {psnr:.3f}")
+# print(f"SSIM: {ssim:.3f}")
+
+# display_sharp_recreated_target(sharp, recreated, target)

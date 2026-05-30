@@ -4,7 +4,7 @@ from torch import optim, nn
 from torch.utils.data import DataLoader, random_split
 from torch.amp import autocast, GradScaler
 
-from models.UNet import UNet
+from models.RendererNet import RendererNet
 from data_preprocessing import DefocusDataset
 
 import boto3
@@ -93,7 +93,7 @@ val_loader = DataLoader(
 # Model
 # ------------------
 
-model = UNet(in_channels=5, out_channels=1).to(device)
+model = RendereNet(in_channels=4, out_channels=3).to(device)
 
 criterion = coc_loss
 optimizer = optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-4)
