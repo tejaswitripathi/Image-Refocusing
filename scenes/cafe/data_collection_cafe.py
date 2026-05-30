@@ -19,9 +19,9 @@ focus_distances = np.linspace(4, 28, 10).tolist()  # meters
 datadir = "//dataset/"  # relative to .blend file
 sensor_width_mm = 35.0  # full-frame width
 
-resolution_x = 1024
-resolution_y = 1024
-samples = 256
+resolution_x = 512
+resolution_y = 512
+samples = 64
 
 camera = bpy.context.scene.camera
 scene = bpy.context.scene
