@@ -45,6 +45,9 @@ DATASET_SUBDIR = "dataset"
 S3_BUCKET = "tejas-blender-bucket"
 S3_PREFIX = "defocus-dataset"
 
+# Scenes to skip during discovery (e.g. broken or unwanted scenes).
+IGNORED_SCENES = {"bottle"}
+
 def resolve_blender():
     """Locate the Blender executable.
 
@@ -97,6 +100,9 @@ def discover_scenes():
     scenes = []
 
     for entry in sorted(os.listdir(SCENES_DIR)):
+        if entry in IGNORED_SCENES:
+            continue
+
         scene_dir = os.path.join(SCENES_DIR, entry)
         if not os.path.isdir(scene_dir):
             continue

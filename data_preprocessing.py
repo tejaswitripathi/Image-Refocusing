@@ -243,61 +243,61 @@ class DefocusDataset(Dataset):
 
         return x, y
 
-def load_data(scenes=["cafe", "grass", "bedroom"]):
-    X = []
-    Y = []
+# def load_data(scenes=["cafe", "grass", "bedroom"]):
+#     X = []
+#     Y = []
 
-    for scene in scenes:
-        datadir = f"{scene}/dataset/"
-        contents = sorted(os.listdir(datadir))
+#     for scene in scenes:
+#         datadir = f"{scene}/dataset/"
+#         contents = sorted(os.listdir(datadir))
 
-        for folder in contents:
-            filepath = os.path.join(datadir, folder)
+#         for folder in contents:
+#             filepath = os.path.join(datadir, folder)
 
-            if not os.path.isdir(filepath):
-                continue
+#             if not os.path.isdir(filepath):
+#                 continue
 
-            defocused_path = os.path.join(filepath, "defocused.png")
-            coc_path = os.path.join(filepath, "coc.json")
+#             defocused_path = os.path.join(filepath, "defocused.png")
+#             coc_path = os.path.join(filepath, "coc.json")
 
-            if not os.path.exists(defocused_path) or not os.path.exists(coc_path):
-                continue
+#             if not os.path.exists(defocused_path) or not os.path.exists(coc_path):
+#                 continue
 
-            defocused_img = io.imread(defocused_path).astype(np.float32)
+#             defocused_img = io.imread(defocused_path).astype(np.float32)
 
-            # RGB: H x W x 3 -> 3 x H x W
-            rgb = defocused_img[:, :, :3] / 255.0
-            rgb = np.transpose(rgb, (2, 0, 1))
+#             # RGB: H x W x 3 -> 3 x H x W
+#             rgb = defocused_img[:, :, :3] / 255.0
+#             rgb = np.transpose(rgb, (2, 0, 1))
 
-            metadata = getMetadata(filepath + "/")
+#             metadata = getMetadata(filepath + "/")
 
-            H = metadata["height"]
-            W = metadata["width"]
+#             H = metadata["height"]
+#             W = metadata["width"]
 
-            f_stop = metadata["f_stop"] / 8.0
-            fstop_map = np.ones((1, H, W), dtype=np.float32) * f_stop
+#             f_stop = metadata["f_stop"] / 8.0
+#             fstop_map = np.ones((1, H, W), dtype=np.float32) * f_stop
 
-            focal_length = (metadata["focal_length_m"] * 1000.0) / 135.0
-            focal_map = np.ones((1, H, W), dtype=np.float32) * focal_length
+#             focal_length = (metadata["focal_length_m"] * 1000.0) / 135.0
+#             focal_map = np.ones((1, H, W), dtype=np.float32) * focal_length
 
-            x = np.concatenate(
-                [rgb, fstop_map, focal_map],
-                axis=0
-            ).astype(np.float32)
+#             x = np.concatenate(
+#                 [rgb, fstop_map, focal_map],
+#                 axis=0
+#             ).astype(np.float32)
 
-            with open(coc_path, "r") as f:
-                coc_px = np.array(json.load(f), dtype=np.float32)
+#             with open(coc_path, "r") as f:
+#                 coc_px = np.array(json.load(f), dtype=np.float32)
 
-            y = np.clip(coc_px, 0, 25) / 25.0
-            y = y[None, :, :].astype(np.float32)
+#             y = np.clip(coc_px, 0, 25) / 25.0
+#             y = y[None, :, :].astype(np.float32)
 
-            X.append(x)
-            Y.append(y)
+#             X.append(x)
+#             Y.append(y)
 
-    X = np.stack(X, axis=0)
-    Y = np.stack(Y, axis=0)
+#     X = np.stack(X, axis=0)
+#     Y = np.stack(Y, axis=0)
 
-    return X, Y
+#     return X, Y
 
 
 # print(f"R channel: {r.shape}")
