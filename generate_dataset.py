@@ -10,18 +10,16 @@ For each scene under ./scenes/ this script:
        s3://<S3_BUCKET>/<S3_PREFIX>/<scene>/ into scenes/<scene>/.
     2. Runs the scene's data_collection_<scene>.py inside Blender (headless).
        The script renders into scenes/<scene>/dataset/ (the "//dataset/" path
-       resolves relative to the .blend file).
-    3. Uploads scenes/<scene>/dataset/ to
-       s3://<S3_BUCKET>/<S3_PREFIX>/<scene>/dataset/
-       (e.g. .../defocus-dataset/cafe/dataset/img_00000.../).
-    4. Deletes the local dataset/ folder and the downloaded .blend to free disk
-       before the next scene.
+       resolves relative to the .blend file) and uploads each rendered sample to
+       s3://<S3_BUCKET>/<S3_PREFIX>/<scene>/dataset/ as it is produced, deleting
+       it locally afterwards.
+    3. Deletes the downloaded .blend (and any leftover local dataset/) to free
+       disk before the next scene.
 
 Usage:
     python generate_dataset.py                 # run every scene
     python generate_dataset.py cafe house      # run only the named scenes
-    python generate_dataset.py --keep-local    # don't delete local output / blend
-    python generate_dataset.py --no-upload     # skip S3 upload (and keep local)
+    python generate_dataset.py --keep-local    # don't delete the downloaded blend / leftovers
 """
 
 import argparse
@@ -194,24 +192,6 @@ def run_scene(scene, blend_file):
     subprocess.run(cmd, check=True)
 
 
-def upload_to_s3(scene):
-    """Sync scenes/<scene>/dataset/ -> s3://<bucket>/<prefix>/<scene>/."""
-    local_dir = os.path.join(SCENES_DIR, scene, DATASET_SUBDIR)
-
-    if not os.path.isdir(local_dir):
-        print(f"[{scene}] No '{DATASET_SUBDIR}/' folder to upload, skipping.")
-        return False
-
-    s3_uri = f"s3://{S3_BUCKET}/{S3_PREFIX}/{scene}/{DATASET_SUBDIR}/"
-
-    cmd = ["aws", "s3", "sync", local_dir, s3_uri]
-
-    print(f"[{scene}] Uploading {local_dir} -> {s3_uri}")
-    subprocess.run(cmd, check=True)
-
-    return True
-
-
 def delete_local_files(scene, blend_file=None):
     """Delete the local dataset/ folder and the downloaded .blend for a scene."""
     local_dir = os.path.join(SCENES_DIR, scene, DATASET_SUBDIR)
@@ -232,8 +212,7 @@ def delete_local_files(scene, blend_file=None):
 def main():
     parser = argparse.ArgumentParser(description="Generate the defocus dataset across all Blender scenes.")
     parser.add_argument("scenes", nargs="*", help="Specific scene names to run (default: all).")
-    parser.add_argument("--no-upload", action="store_true", help="Skip uploading to S3 (implies --keep-local).")
-    parser.add_argument("--keep-local", action="store_true", help="Do not delete local output after upload.")
+    parser.add_argument("--keep-local", action="store_true", help="Do not delete the downloaded blend / leftover output.")
     args = parser.parse_args()
 
     available = discover_scenes()
@@ -259,11 +238,8 @@ def main():
 
             run_scene(scene, blend_file)
 
-            if not args.no_upload:
-                uploaded = upload_to_s3(scene)
-
-                if uploaded and not args.keep_local:
-                    delete_local_files(scene, blend_file)
+            if not args.keep_local:
+                delete_local_files(scene, blend_file)
 
             print(f"[{scene}] Done.")
 
@@ -279,7 +255,7 @@ def main():
         print(f"Completed with failures in: {', '.join(failures)}")
         sys.exit(1)
     else:
-        print("All scenes generated and uploaded successfully!")
+        print("All scenes generated successfully!")
 
 
 if __name__ == "__main__":

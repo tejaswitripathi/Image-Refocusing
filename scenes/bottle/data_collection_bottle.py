@@ -3,6 +3,8 @@ import os
 import json
 import random
 import math
+import shutil
+import subprocess
 import numpy as np
 from mathutils import Vector
 
@@ -11,6 +13,12 @@ from mathutils import Vector
 # ----------------------------
 
 random.seed(42)
+
+# Each rendered sample is uploaded to S3 and then deleted locally so disk
+# usage stays flat while a scene renders.
+S3_BUCKET = "tejas-blender-bucket"
+S3_PREFIX = "defocus-dataset"
+scene_name = os.path.basename(os.path.dirname(bpy.data.filepath)) or "unknown_scene"
 
 f_stops = [1.2, 1.4, 1.8, 2.0, 2.8, 4.0, 5.6, 6.3, 7.1, 8.0, 11.0, 16.0, 22.0]
 focal_lengths = [50, 85, 135]
@@ -47,6 +55,19 @@ camera.data.sensor_width = sensor_width_mm
 
 def ensure_dir(path):
     os.makedirs(bpy.path.abspath(path), exist_ok=True)
+
+def upload_and_cleanup(folder):
+    # Upload a single rendered sample folder to S3, then remove it locally.
+    local = bpy.path.abspath(folder)
+    sample = os.path.basename(os.path.normpath(local))
+    s3_uri = f"s3://{S3_BUCKET}/{S3_PREFIX}/{scene_name}/dataset/{sample}/"
+
+    try:
+        subprocess.run(["aws", "s3", "sync", local, s3_uri], check=True)
+        shutil.rmtree(local, ignore_errors=True)
+        print(f"Uploaded and removed {local} -> {s3_uri}")
+    except Exception as e:
+        print(f"Upload failed for {local}, keeping local copy: {e}")
 
 def object_world_center(obj):
     corners = [obj.matrix_world @ Vector(corner) for corner in obj.bound_box]
@@ -298,6 +319,9 @@ for start, end in depth_bins:
                 json.dump(metadata, f, indent=2)
 
             print(f"Saved {folder}")
+
+            upload_and_cleanup(folder)
+
             img_i += 1
 
     camera.data.shift_y = 0.0
