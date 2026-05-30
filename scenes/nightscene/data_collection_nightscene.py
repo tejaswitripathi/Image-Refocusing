@@ -90,21 +90,29 @@ def render_png(filepath):
     bpy.ops.render.render(write_still=True)
 
 def setup_depth_nodes(output_dir):
-    scene.use_nodes = True
-    tree = scene.node_tree
-    tree.nodes.clear()
+    # remove old depth compositor groups
+    for ng in list(bpy.data.node_groups):
+        if ng.name.startswith("DepthCompositor"):
+            bpy.data.node_groups.remove(ng)
+
+    tree = bpy.data.node_groups.new("DepthCompositor", "CompositorNodeTree")
+    scene.compositing_node_group = tree
 
     render_layers = tree.nodes.new(type="CompositorNodeRLayers")
+    print("Render layer outputs:", [o.name for o in render_layers.outputs])
 
     depth_output = tree.nodes.new(type="CompositorNodeOutputFile")
-    depth_output.label = "Depth Output"
-    depth_output.base_path = bpy.path.abspath(output_dir)
-    depth_output.file_slots[0].path = "depth_"
-    depth_output.format.file_format = "OPEN_EXR"
+    depth_output.directory = bpy.path.abspath(output_dir)
+    depth_output.file_name = "depth_"
+    depth_output.format.file_format = "OPEN_EXR_MULTILAYER"
     depth_output.format.color_depth = "32"
-    depth_output.format.color_mode = "BW"
 
-    tree.links.new(render_layers.outputs["Depth"], depth_output.inputs[0])
+    item = depth_output.file_output_items.new("FLOAT", "depth")
+
+    tree.links.new(render_layers.outputs["Depth"], depth_output.inputs["depth"])
+
+    print("File output directory:", depth_output.directory)
+    print("File output name:", depth_output.file_name)
 
 def setup_mask_nodes(output_dir, subject_index):
     scene.use_nodes = True
@@ -128,7 +136,7 @@ def setup_mask_nodes(output_dir, subject_index):
     tree.links.new(id_mask.outputs["Alpha"], mask_output.inputs[0])
 
 def disable_nodes():
-    scene.use_nodes = False
+    scene.compositing_node_group = None
 
 # ----------------------------
 # ENABLE PASSES
@@ -230,18 +238,13 @@ for start, end in depth_bins:
             camera.data.dof.aperture_fstop = f_stop
 
             # ----------------------------
-            # 3. Depth + object index pass as multilayer EXR
+            # 3. Depth EXR through compositor
             # ----------------------------
 
-            scene.render.image_settings.file_format = "OPEN_EXR"
-            scene.render.image_settings.color_depth = "32"
+            setup_depth_nodes(folder)
 
-            scene.render.filepath = os.path.join(folder, "passes.exr")
+            scene.render.filepath = os.path.join(folder, "_compositor_dummy.png")
             bpy.ops.render.render(write_still=True)
-
-            # restore PNG for next renders
-            scene.render.image_settings.file_format = "PNG"
-            scene.render.image_settings.color_mode = "RGB"
 
             # ----------------------------
             # 4. Subject mask
