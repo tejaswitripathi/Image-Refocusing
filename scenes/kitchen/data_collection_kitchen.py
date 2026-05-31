@@ -21,7 +21,7 @@ S3_PREFIX = "defocus-dataset"
 scene_name = os.path.basename(os.path.dirname(bpy.data.filepath)) or "unknown_scene"
 
 f_stops = [1.2, 1.4, 1.8, 2.0, 2.8, 4.0, 5.6, 6.3, 7.1, 8.0, 11.0, 16.0, 22.0]
-focal_lengths = np.linspace(14, 200, 10).tolist()
+focal_lengths = np.linspace(14, 200, 5).tolist()
 focus_distances = np.linspace(2.209, 8.963, 10).tolist()  # meters
 
 datadir = "//dataset/"  # relative to .blend file
