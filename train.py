@@ -17,27 +17,6 @@ def upload_checkpoint(local_path, s3_key):
     )
     print(f"Uploaded to s3://{S3_BUCKET}/{s3_key}")
 
-def gradient_loss(pred, target):
-    pred_dx = torch.abs(pred[:, :, :, 1:] - pred[:, :, :, :-1])
-    target_dx = torch.abs(target[:, :, :, 1:] - target[:, :, :, :-1])
-
-    pred_dy = torch.abs(pred[:, :, 1:, :] - pred[:, :, :-1, :])
-    target_dy = torch.abs(target[:, :, 1:, :] - target[:, :, :-1, :])
-
-    return (
-        torch.abs(pred_dx - target_dx).mean()
-        + torch.abs(pred_dy - target_dy).mean()
-    )
-
-def coc_loss(pred, target):
-    l1 = torch.abs(pred - target)
-    weight = 1.0 + 4.0 * target
-    weighted_l1 = (weight * l1).mean()
-
-    grad = gradient_loss(pred, target)
-
-    return weighted_l1 + 0.2 * grad
-
 # ------------------
 # Config
 # ------------------
@@ -51,7 +30,7 @@ checkpoint_dir = "checkpoints"
 s3 = boto3.client("s3")
 
 S3_BUCKET = "tejas-blender-bucket"
-S3_CHECKPOINT_PREFIX = "defocus-checkpoints/unet-coc"
+S3_CHECKPOINT_PREFIX = "defocus-checkpoints/renderer-net"
 
 os.makedirs(checkpoint_dir, exist_ok=True)
 
@@ -93,9 +72,9 @@ val_loader = DataLoader(
 # Model
 # ------------------
 
-model = RendereNet(in_channels=4, out_channels=3).to(device)
+model = RendererNet(in_channels=6, out_channels=3).to(device)
 
-criterion = coc_loss
+criterion = nn.MSELoss()
 optimizer = optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-4)
 
 scheduler = optim.lr_scheduler.ReduceLROnPlateau(
@@ -214,8 +193,8 @@ for epoch in range(start_epoch, num_epochs):
 
     print(
         f"Epoch {epoch+1}/{num_epochs} | "
-        f"Train L1: {avg_train_loss:.6f} | "
-        f"Val L1: {avg_val_loss:.6f} | "
+        f"Train MSE: {avg_train_loss:.6f} | "
+        f"Val MSE: {avg_val_loss:.6f} | "
         f"LR: {optimizer.param_groups[0]['lr']:.2e}"
     )
 
@@ -257,12 +236,12 @@ for epoch in range(start_epoch, num_epochs):
     if avg_val_loss < best_val_loss:
         best_val_loss = avg_val_loss
 
-        best_path = os.path.join(checkpoint_dir, "best_unet_coc.pth")
+        best_path = os.path.join(checkpoint_dir, "best_renderer.pth")
         torch.save(model.state_dict(), best_path)
 
         upload_checkpoint(
             best_path,
-            f"{S3_CHECKPOINT_PREFIX}/best_unet_coc.pth"
+            f"{S3_CHECKPOINT_PREFIX}/best_renderer.pth"
         )
 
         print(f"Saved new best model: {best_path}")

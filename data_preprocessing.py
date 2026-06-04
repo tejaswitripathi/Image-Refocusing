@@ -9,7 +9,17 @@ from skimage import io
 from skimage.transform import resize
 
 
-from coc_map import getMetadata
+from coc_map import getMetadata, generate_coc_map
+
+# Normalization constants. The dataset sweeps f_stops up to 22 and focal
+# lengths up to 200mm, so we scale by those maxima to keep the conditioning
+# channels roughly in [0, 1]. CoC (in px) is clipped/scaled the same way as
+# during the CoC-prediction stage so the renderer sees a consistent range.
+F_STOP_MAX = 22.0
+FOCAL_LENGTH_MM_MAX = 200.0
+COC_PX_MAX = 25.0
+TARGET_SIZE = 512
+
 
 class DefocusDataset(Dataset):
 
@@ -32,31 +42,31 @@ class DefocusDataset(Dataset):
         # Build sample index
         for scene in scenes:
 
-            prefix = f"{s3_prefix}/{scene}/"
+            # Samples live under {prefix}/{scene}/dataset/{img_xxxxx_...}/
+            prefix = f"{s3_prefix}/{scene}/dataset/"
 
-            response = self.s3.list_objects_v2(
+            paginator = self.s3.get_paginator("list_objects_v2")
+
+            for page in paginator.paginate(
                 Bucket=bucket_name,
                 Prefix=prefix,
                 Delimiter="/"
-            )
+            ):
 
-            if "CommonPrefixes" not in response:
-                continue
+                for obj in page.get("CommonPrefixes", []):
 
-            for obj in response["CommonPrefixes"]:
+                    folder_prefix = obj["Prefix"]
 
-                folder_prefix = obj["Prefix"]
+                    # Example:
+                    # defocus-dataset/bedroom/dataset/img_00000_f1.2_fl35.0_fd2.77/
 
-                # Example:
-                # defocus-dataset/cafe/img_0001/
+                    sample_name = folder_prefix.rstrip("/").split("/")[-1]
 
-                sample_name = folder_prefix.rstrip("/").split("/")[-1]
-
-                self.samples.append({
-                    "scene": scene,
-                    "prefix": folder_prefix,
-                    "sample_name": sample_name
-                })
+                    self.samples.append({
+                        "scene": scene,
+                        "prefix": folder_prefix,
+                        "sample_name": sample_name
+                    })
 
         print(f"Found {len(self.samples)} samples.")
 
@@ -77,6 +87,51 @@ class DefocusDataset(Dataset):
             s3_key,
             local_path
         )
+
+    def _find_depth_key(self, prefix):
+
+        # The depth pass is written as depth_<frame>.exr; locate it in S3.
+        response = self.s3.list_objects_v2(
+            Bucket=self.bucket_name,
+            Prefix=prefix
+        )
+
+        for obj in response.get("Contents", []):
+            if obj["Key"].endswith(".exr"):
+                return obj["Key"]
+
+        return None
+
+    def _get_coc_px(self, prefix, local_folder):
+
+        # CoC maps don't exist in S3, so generate them once from the depth EXR
+        # + metadata via coc_map, then cache the result locally so subsequent
+        # epochs skip the (large) EXR download and recomputation.
+        coc_cache_path = os.path.join(local_folder, "coc.npy")
+
+        if os.path.exists(coc_cache_path):
+            return np.load(coc_cache_path).astype(np.float32)
+
+        depth_key = self._find_depth_key(prefix)
+
+        if depth_key is None:
+            raise FileNotFoundError(
+                f"No depth EXR found under s3://{self.bucket_name}/{prefix}"
+            )
+
+        depth_filename = depth_key.split("/")[-1]
+
+        self._download_if_missing(
+            depth_key,
+            os.path.join(local_folder, depth_filename)
+        )
+
+        metadata_full = getMetadata(local_folder + "/")
+        coc_px = generate_coc_map(metadata_full).astype(np.float32)
+
+        np.save(coc_cache_path, coc_px)
+
+        return coc_px
 
     def __getitem__(self, idx):
 
@@ -99,9 +154,9 @@ class DefocusDataset(Dataset):
         # ----------------------------
 
         files = {
+            "sharp": "sharp.png",
             "defocused": "defocused.png",
             "metadata": "metadata.json",
-            "coc": "coc.json"
         }
 
         local_paths = {}
@@ -123,35 +178,42 @@ class DefocusDataset(Dataset):
             )
 
         # ----------------------------
-        # Load RGB
+        # Load sharp (input) and defocused (target) RGB
         # ----------------------------
+
+        sharp_img = io.imread(
+            local_paths["sharp"]
+        ).astype(np.float32)
 
         defocused_img = io.imread(
             local_paths["defocused"]
         ).astype(np.float32)
 
-        rgb = defocused_img[:, :, :3] / 255.0
+        sharp_rgb = sharp_img[:, :, :3] / 255.0
+        defocused_rgb = defocused_img[:, :, :3] / 255.0
 
         # ----------------------------
-        # Load CoC
+        # CoC map (generated from depth + metadata)
         # ----------------------------
 
-        with open(local_paths["coc"], "r") as f:
-            coc_px = np.array(
-                json.load(f),
-                dtype=np.float32
-            )
-
-        coc_px = np.clip(coc_px, 0, 25) / 25.0
+        coc_px = self._get_coc_px(prefix, local_folder)
+        coc_px = np.clip(coc_px, 0, COC_PX_MAX) / COC_PX_MAX
 
         # ----------------------------
-        # Resize full image
+        # Resize everything to a common size
         # ----------------------------
 
-        target_size = 512
+        target_size = TARGET_SIZE
 
-        rgb = resize(
-            rgb,
+        sharp_rgb = resize(
+            sharp_rgb,
+            (target_size, target_size),
+            anti_aliasing=True,
+            preserve_range=True
+        ).astype(np.float32)
+
+        defocused_rgb = resize(
+            defocused_rgb,
             (target_size, target_size),
             anti_aliasing=True,
             preserve_range=True
@@ -169,19 +231,20 @@ class DefocusDataset(Dataset):
         # Convert RGB to CHW
         # ----------------------------
 
-        rgb = np.transpose(rgb, (2, 0, 1))
+        sharp_rgb = np.transpose(sharp_rgb, (2, 0, 1))
+        defocused_rgb = np.transpose(defocused_rgb, (2, 0, 1))
 
         H = target_size
         W = target_size
 
         # ----------------------------
-        # Metadata
+        # Metadata -> conditioning maps
         # ----------------------------
 
         with open(local_paths["metadata"], "r") as f:
             metadata = json.load(f)
 
-        f_stop = metadata["f_stop"] / 8.0
+        f_stop = metadata["f_stop"] / F_STOP_MAX
 
         fstop_map = np.ones(
             (1, H, W),
@@ -190,31 +253,35 @@ class DefocusDataset(Dataset):
 
         focal_length = (
             metadata["focal_length_mm"]
-        ) / 135.0
+        ) / FOCAL_LENGTH_MM_MAX
 
         focal_map = np.ones(
             (1, H, W),
             dtype=np.float32
         ) * focal_length
 
+        coc_map_channel = coc_px[None, :, :]
+
         # ----------------------------
-        # Input tensor
+        # Input tensor (6 channels):
+        # sharp RGB (3) + f-stop (1) + focal length (1) + CoC (1)
         # ----------------------------
 
         x = np.concatenate(
             [
-                rgb,
+                sharp_rgb,
                 fstop_map,
-                focal_map
+                focal_map,
+                coc_map_channel
             ],
             axis=0
         ).astype(np.float32)
 
         # ----------------------------
-        # Target tensor
+        # Target tensor (3 channels): defocused RGB
         # ----------------------------
 
-        y = coc_px[None, :, :].astype(np.float32)
+        y = defocused_rgb.astype(np.float32)
 
         # ----------------------------
         # NaN protection

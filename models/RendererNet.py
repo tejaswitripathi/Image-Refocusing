@@ -1,7 +1,13 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from UNet import double_convolution
+
+try:
+    # When imported as part of the `models` package (e.g. train.py).
+    from models.UNet import double_convolution
+except ImportError:
+    # When run directly as a script from within the models/ directory.
+    from UNet import double_convolution
 
 class RendererNet(nn.Module):
 
@@ -66,13 +72,12 @@ class RendererNet(nn.Module):
         x = self.up_convolution_3(torch.cat([down_3, up_3], 1))
         up_4 = self.up_transpose_4(x)
         x = self.up_convolution_4(torch.cat([down_1, up_4], 1))
-        out = self.out(x)
         out = torch.sigmoid(self.out(x))
         return out
 
 if __name__ == '__main__':
-    input_image = torch.rand((1, 5, 256, 256))
-    model = RendererNet(in_channels=4, out_channels=3)
+    input_image = torch.rand((1, 6, 256, 256))
+    model = RendererNet(in_channels=6, out_channels=3)
     # Total parameters and trainable parameters.
     total_params = sum(p.numel() for p in model.parameters())
     print(f"{total_params:,} total parameters.")

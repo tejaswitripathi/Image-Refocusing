@@ -1,3 +1,5 @@
+import os
+import glob
 import OpenEXR
 import Imath
 import numpy as np
@@ -12,8 +14,15 @@ from scipy.ndimage import gaussian_filter
 
 
 def getDepth(datadir):
-    
-    filepath = datadir + "depth_.exr"
+
+    # Blender writes the depth pass as depth_<frame>.exr (e.g. depth_0000.exr),
+    # so glob for it rather than assuming a fixed frame number.
+    matches = sorted(glob.glob(os.path.join(datadir, "depth_*.exr")))
+
+    if not matches:
+        raise FileNotFoundError(f"No depth EXR (depth_*.exr) found in {datadir}")
+
+    filepath = matches[0]
 
     exr = OpenEXR.InputFile(filepath)
 
