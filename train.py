@@ -1,4 +1,4 @@
-import os
+import io
 import torch
 from torch import optim, nn
 from torch.utils.data import DataLoader, random_split
@@ -9,13 +9,25 @@ from data_preprocessing import DefocusDataset
 
 import boto3
 
-def upload_checkpoint(local_path, s3_key):
-    s3.upload_file(
-        local_path,
-        S3_BUCKET,
-        s3_key
-    )
+
+def upload_checkpoint_to_s3(checkpoint, s3_key):
+    # Serialize the checkpoint to an in-memory buffer and stream it straight
+    # to S3 so nothing is written to local disk.
+    buffer = io.BytesIO()
+    torch.save(checkpoint, buffer)
+    buffer.seek(0)
+
+    s3.upload_fileobj(buffer, S3_BUCKET, s3_key)
     print(f"Uploaded to s3://{S3_BUCKET}/{s3_key}")
+
+
+def download_checkpoint_from_s3(s3_key, map_location):
+    # Pull the checkpoint from S3 into memory and load it without touching disk.
+    buffer = io.BytesIO()
+    s3.download_fileobj(S3_BUCKET, s3_key, buffer)
+    buffer.seek(0)
+
+    return torch.load(buffer, map_location=map_location)
 
 # ------------------
 # Config
@@ -25,14 +37,12 @@ learning_rate = 1e-4
 batch_size = 4
 num_epochs = 100
 val_split = 0.15
-checkpoint_dir = "checkpoints"
 
 s3 = boto3.client("s3")
 
 S3_BUCKET = "tejas-blender-bucket"
 S3_CHECKPOINT_PREFIX = "defocus-checkpoints/renderer-net"
-
-os.makedirs(checkpoint_dir, exist_ok=True)
+S3_BEST_KEY = f"{S3_CHECKPOINT_PREFIX}/best_renderer.pth"
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print("Using device:", device)
@@ -93,21 +103,24 @@ best_val_loss = float("inf")
 # ------------------
 
 start_epoch = 0
-latest_path = os.path.join(checkpoint_dir, "latest.pth")
 
 try:
-    checkpoint = torch.load(latest_path, map_location=device)
+    checkpoint = download_checkpoint_from_s3(S3_BEST_KEY, map_location=device)
 
     model.load_state_dict(checkpoint["model_state_dict"])
     optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
 
+    if "scheduler_state_dict" in checkpoint:
+        scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
+
     start_epoch = checkpoint["epoch"]
     best_val_loss = checkpoint.get("val_loss", float("inf"))
 
-    print(f"Resuming from epoch {start_epoch}")
+    print(f"Resuming from best checkpoint at epoch {start_epoch} "
+          f"(best val MSE: {best_val_loss:.6f})")
 
 except Exception as e:
-    print(f"No local checkpoint found. Starting fresh. Reason: {e}")
+    print(f"No best checkpoint found in S3. Starting fresh. Reason: {e}")
 
 for epoch in range(start_epoch, num_epochs):
     print(f"Starting epoch {epoch+1}")
@@ -198,52 +211,24 @@ for epoch in range(start_epoch, num_epochs):
         f"LR: {optimizer.param_groups[0]['lr']:.2e}"
     )
 
-    # save latest checkpoint
-    # epoch_path = os.path.join(
-    #     checkpoint_dir,
-    #     f"epoch_{epoch+1}.pth"
-    # )
-
-    # torch.save({
-    #     "epoch": epoch + 1,
-    #     "model_state_dict": model.state_dict(),
-    #     "optimizer_state_dict": optimizer.state_dict(),
-    #     "val_loss": avg_val_loss,
-    # }, epoch_path)
-
-    # upload_checkpoint(
-    #     epoch_path,
-    #     f"{S3_CHECKPOINT_PREFIX}/epoch_{epoch+1}.pth"
-    # )
-
-    latest_path = os.path.join(checkpoint_dir, "latest.pth")
-
-    try:
-        torch.save({
-            "epoch": epoch + 1,
-            "model_state_dict": model.state_dict(),
-            "val_loss": avg_val_loss,
-        }, latest_path)
-
-        upload_checkpoint(
-            latest_path,
-            f"{S3_CHECKPOINT_PREFIX}/latest.pth"
-        )
-    except Exception as e:
-        print("Checkpoint save failed:", e)
-
-    # save best checkpoint
+    # Only upload on a new best. The checkpoint carries everything needed to
+    # resume (model + optimizer + scheduler + epoch), so if training dies we
+    # can just pull this from S3 and continue.
     if avg_val_loss < best_val_loss:
         best_val_loss = avg_val_loss
 
-        best_path = os.path.join(checkpoint_dir, "best_renderer.pth")
-        torch.save(model.state_dict(), best_path)
+        checkpoint = {
+            "epoch": epoch + 1,
+            "model_state_dict": model.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "scheduler_state_dict": scheduler.state_dict(),
+            "val_loss": avg_val_loss,
+        }
 
-        upload_checkpoint(
-            best_path,
-            f"{S3_CHECKPOINT_PREFIX}/best_renderer.pth"
-        )
-
-        print(f"Saved new best model: {best_path}")
+        try:
+            upload_checkpoint_to_s3(checkpoint, S3_BEST_KEY)
+            print(f"New best val MSE: {best_val_loss:.6f} (epoch {epoch+1})")
+        except Exception as e:
+            print("Checkpoint upload failed:", e)
 
 print("Training complete!")
