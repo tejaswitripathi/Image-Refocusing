@@ -28,8 +28,21 @@ class DefocusDataset(Dataset):
         scenes=("cafe", "grass", "bedroom"),
         bucket_name="tejas-blender-bucket",
         s3_prefix="defocus-dataset",
-        local_cache_dir="cache"
+        local_cache_dir="cache",
+        direction="render"
     ):
+
+        # direction controls what the model learns:
+        #   "render"  -> input = sharp RGB,     target = defocused RGB
+        #   "sharpen" -> input = defocused RGB, target = sharp RGB
+        # In both cases the f-stop, focal-length and CoC channels are appended
+        # to the input, so the input is always 6ch and the target 3ch.
+        if direction not in ("render", "sharpen"):
+            raise ValueError(
+                f"direction must be 'render' or 'sharpen', got {direction!r}"
+            )
+
+        self.direction = direction
 
         self.bucket_name = bucket_name
         self.s3_prefix = s3_prefix
@@ -263,13 +276,26 @@ class DefocusDataset(Dataset):
         coc_map_channel = coc_px[None, :, :]
 
         # ----------------------------
+        # Pick input/target RGB based on direction.
+        # "render":  sharp -> defocused
+        # "sharpen": defocused -> sharp
+        # ----------------------------
+
+        if self.direction == "render":
+            input_rgb = sharp_rgb
+            target_rgb = defocused_rgb
+        else:  # "sharpen"
+            input_rgb = defocused_rgb
+            target_rgb = sharp_rgb
+
+        # ----------------------------
         # Input tensor (6 channels):
-        # sharp RGB (3) + f-stop (1) + focal length (1) + CoC (1)
+        # input RGB (3) + f-stop (1) + focal length (1) + CoC (1)
         # ----------------------------
 
         x = np.concatenate(
             [
-                sharp_rgb,
+                input_rgb,
                 fstop_map,
                 focal_map,
                 coc_map_channel
@@ -278,10 +304,10 @@ class DefocusDataset(Dataset):
         ).astype(np.float32)
 
         # ----------------------------
-        # Target tensor (3 channels): defocused RGB
+        # Target tensor (3 channels)
         # ----------------------------
 
-        y = defocused_rgb.astype(np.float32)
+        y = target_rgb.astype(np.float32)
 
         # ----------------------------
         # NaN protection
