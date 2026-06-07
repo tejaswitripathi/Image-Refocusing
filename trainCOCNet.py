@@ -88,6 +88,22 @@ S3_BEST_KEY = f"{S3_CHECKPOINT_PREFIX}/best_coc.pth"
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print("Using device:", device)
 
+# Mixed precision: this script chains two deep UNets (coc_net -> frozen
+# renderer_net), so float16 activations can overflow to inf/NaN in the wide
+# bottleneck layers. bfloat16 has the same exponent range as float32 and avoids
+# that overflow, so prefer it when the GPU supports it and only fall back to
+# float16 (with loss scaling) otherwise.
+use_amp = (device == "cuda")
+amp_dtype = (
+    torch.bfloat16
+    if (use_amp and torch.cuda.is_bf16_supported())
+    else torch.float16
+)
+print(f"AMP enabled: {use_amp} | dtype: {amp_dtype if use_amp else 'fp32'}")
+
+# Clip gradients to keep the stacked-network training stable.
+GRAD_CLIP_NORM = 1.0
+
 # ------------------
 # Load data
 # ------------------
@@ -162,7 +178,8 @@ scheduler = optim.lr_scheduler.ReduceLROnPlateau(
     patience=3
 )
 
-scaler = GradScaler("cuda", enabled=(device == "cuda"))
+# GradScaler is only needed for float16; bfloat16 doesn't require loss scaling.
+scaler = GradScaler("cuda", enabled=(use_amp and amp_dtype == torch.float16))
 
 best_val_loss = float("inf")
 
@@ -218,7 +235,7 @@ for epoch in range(start_epoch, num_epochs):
 
         optimizer.zero_grad(set_to_none=True)
 
-        with autocast("cuda", enabled=(device == "cuda")):
+        with autocast("cuda", dtype=amp_dtype, enabled=use_amp):
             coc_pred, coc_gt, defocused_pred, defocused_gt = run_pipeline(
                 coc_net, renderer_net, batch_X, batch_y
             )
@@ -253,6 +270,8 @@ for epoch in range(start_epoch, num_epochs):
             raise RuntimeError("Stopping training due to NaN loss")
 
         scaler.scale(loss).backward()
+        scaler.unscale_(optimizer)
+        torch.nn.utils.clip_grad_norm_(coc_net.parameters(), GRAD_CLIP_NORM)
         scaler.step(optimizer)
         scaler.update()
 
@@ -274,13 +293,14 @@ for epoch in range(start_epoch, num_epochs):
             batch_X = batch_X.to(device, non_blocking=True)
             batch_y = batch_y.to(device, non_blocking=True)
 
-            coc_pred, coc_gt, defocused_pred, defocused_gt = run_pipeline(
-                coc_net, renderer_net, batch_X, batch_y
-            )
+            with autocast("cuda", dtype=amp_dtype, enabled=use_amp):
+                coc_pred, coc_gt, defocused_pred, defocused_gt = run_pipeline(
+                    coc_net, renderer_net, batch_X, batch_y
+                )
 
-            image_loss = image_loss_fn(defocused_pred, defocused_gt)
-            coc_loss = coc_loss_fn(coc_pred, coc_gt)
-            loss = image_loss + COC_LOSS_WEIGHT * coc_loss
+                image_loss = image_loss_fn(defocused_pred, defocused_gt)
+                coc_loss = coc_loss_fn(coc_pred, coc_gt)
+                loss = image_loss + COC_LOSS_WEIGHT * coc_loss
 
             val_loss += loss.item()
             val_image_loss += image_loss.item()
