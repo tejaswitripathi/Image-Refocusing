@@ -10,3 +10,7 @@ scenes/*/dataset/
 scenes/*/*.blend
 scenes/*/*.blend1
 scenes/nightscene/assets/
+cache/
+checkpoints/
+external/
+notes.txt
