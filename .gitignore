@@ -1,4 +1,3 @@
-cache/
 .ipynb_checkpoints/
 .venv/
 __pycache__/
@@ -10,7 +9,8 @@ scenes/*/dataset/
 scenes/*/*.blend
 scenes/*/*.blend1
 scenes/nightscene/assets/
-cache/
+cache/img_00000_f1.2_fl18.0_fd7.52/
+cache/img_00000_f1.2_fl35.0_fd2.77/
 checkpoints/
 external/
 notes.txt
