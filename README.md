@@ -115,6 +115,36 @@ In the example above, the input is a portrait with the subject in focus. Clickin
 - **Sharpener Net** — already good enough for a prototype, but would benefit from more/cleaner training data to fully recover high-frequency detail.
 - **CoC source** — a pseudo-CoC generated analytically from **Depth Anything V2** depth is currently **noticeably more accurate** than the CoC predicted directly by the learned CoC network; the learned estimator likely needs more data to close the gap. The prototype therefore uses the Depth-Anything pseudo-CoC path.
 
+### Quantitative evaluation: edge artifacts
+
+`quantitative-tests/benchmark_edge_artifacts.py` runs the same fixed f/1.2 pipeline as `prototype.py` on the four JPGs in `cache/` and compares **edge artifacts** against the original image for two compositing methods:
+
+1. **Flat Gaussian background** — uniform blur pasted in wherever pseudo-CoC > 1 px (hard mask).
+2. **CoC-weighted NN render** — RendererNet output blended back onto the original with a smoothstep weight (in-focus pixels stay untouched).
+
+Metrics are computed in three regions where compositing artifacts show up most: **in-focus** pixels (CoC ≤ 0.4), the **transition band** (0.4 < CoC ≤ 1.0), and a **boundary ring** (±3 px around the Gaussian mask edge). Lower is better. Full per-image numbers are in `quantitative-tests/results/edge_artifact_benchmark.json`.
+
+**Setup:** f/1.2, focal length 6.765 mm, Gaussian σ = 12 px, images resized to max side 768 px, focus at image center.
+
+| Metric (avg. across 4 images) | Gaussian vs original | NN render vs original | NN improvement |
+|---|---:|---:|---:|
+| Boundary ring mean abs diff | 0.066 | 0.007 | **9.3×** |
+| Boundary ring mean grad excess | 0.044 | 0.005 | **8.2×** |
+| Global mean grad excess | 0.025 | 0.009 | **2.8×** |
+| In-focus mean grad excess | 0.0008 | 0.00009 | **8.9×** |
+
+**Takeaways:**
+
+- The hard Gaussian mask produces strong halos at the focus/defocus boundary — boundary-ring pixel error averages **~0.066** vs **~0.007** for the NN (roughly **6–21×** better per image).
+- In-focus regions stay clean for both methods (mean abs diff ≈ 0), but the NN leaks less spurious edge energy even there (**~9×** lower in-focus grad excess on average).
+- The NN’s smoothstep blend removes most of the visible cut-line artifact; the flat Gaussian baseline is useful mainly as a simple comparison point, not as a production compositor.
+
+Re-run the benchmark:
+
+```bash
+python quantitative-tests/benchmark_edge_artifacts.py
+```
+
 ---
 
 ## Repository Structure
@@ -128,7 +158,10 @@ Image_Refocusing/
 ├── trainSharpenerNet.py       # Train Sharpener Net (defocused + CoC -> sharp), MSE, S3 checkpointing
 ├── trainCOCNet.py             # Train CoC Net through the frozen Renderer (composite loss)
 ├── depth_anything_inference.py# Depth Anything V2 -> relative depth -> pseudo-CoC
-├── prototype.py               # End-to-end interactive refocusing demo (click-to-refocus)
+├── prototype.py               # End-to-end shallow DoF rendering demo (f/1.2 + CoC-weighted blend)
+├── app.py                     # Gradio demo for Hugging Face Spaces
+├── quantitative-tests/
+│   └── benchmark_edge_artifacts.py  # Edge-artifact benchmark vs flat Gaussian baseline
 ├── recreate_defocus_default.py# Sharp + CoC -> defocused via RendererNet (weights from S3), with metrics
 ├── recreate_sharp_default.py  # Defocused + CoC -> sharp via SharpenerNet (weights from S3), with metrics
 ├── generate_coc_data.py       # (legacy) writes coc.json next to local renders
